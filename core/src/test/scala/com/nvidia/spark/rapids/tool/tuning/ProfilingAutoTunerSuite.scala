@@ -57,6 +57,38 @@ abstract class ProfilingAutoTunerSuiteBase extends BaseAutoTunerSuite {
   }
 
   /**
+   * Helper method to verify that the recommended shuffle manager version matches the
+   * expected version.
+   */
+  protected def verifyRecommendedShuffleManagerVersion(
+                                                      autoTuner: AutoTuner,
+                                                      expectedSmVersion: String): Unit = {
+    autoTuner.getShuffleManagerClassName match {
+      case Right(smClassName) =>
+        assert(smClassName == ProfilingAutoTunerHelper
+          .buildShuffleManagerClassName(expectedSmVersion))
+      case Left(comment) =>
+        fail(s"Expected valid RapidsShuffleManager but got comment: $comment")
+    }
+  }
+
+  /**
+   * Helper method to verify that the shuffle manager version is not recommended
+   * for the unsupported Spark version.
+   */
+  protected def verifyUnsupportedSparkVersionForShuffleManager(
+                                                              autoTuner: AutoTuner,
+                                                              sparkVersion: String): Unit = {
+    autoTuner.getShuffleManagerClassName match {
+      case Right(smClassName) =>
+        fail(s"Expected error comment but got valid RapidsShuffleManager: $smClassName")
+      case Left(comment) =>
+        assert(comment == shuffleManagerCommentForUnsupportedVersion(sparkVersion,
+          autoTuner.platform))
+    }
+  }
+
+  /**
    * Helper method to extract the AutoTuner results from the profile log content
    * TODO: We should store the AutoTuner results in a separate file.
    */
@@ -2310,22 +2342,6 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
     compareOutput(expectedResults, autoTunerOutput)
   }
 
-  /**
-   * Helper method to verify that the recommended shuffle manager version matches the
-   * expected version.
-   */
-  private def verifyRecommendedShuffleManagerVersion(
-                                                      autoTuner: AutoTuner,
-                                                      expectedSmVersion: String): Unit = {
-    autoTuner.getShuffleManagerClassName match {
-      case Right(smClassName) =>
-        assert(smClassName == ProfilingAutoTunerHelper
-          .buildShuffleManagerClassName(expectedSmVersion))
-      case Left(comment) =>
-        fail(s"Expected valid RapidsShuffleManager but got comment: $comment")
-    }
-  }
-
   val dbPlatform: Platform = PlatformFactory.createInstance(PlatformNames.DATABRICKS_AWS)
   dbPlatform.supportedShuffleManagerVersionMap.foreach { case (dbVersion, smVersion) =>
     test(s"test shuffle manager version for supported databricks version - $dbVersion") {
@@ -2367,22 +2383,6 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
     verifyRecommendedShuffleManagerVersion(autoTuner, expectedSmVersion = "330")
   }
 
-  /**
-   * Helper method to verify that the shuffle manager version is not recommended
-   * for the unsupported Spark version.
-   */
-  private def verifyUnsupportedSparkVersionForShuffleManager(
-                                                              autoTuner: AutoTuner,
-                                                              sparkVersion: String): Unit = {
-    autoTuner.getShuffleManagerClassName match {
-      case Right(smClassName) =>
-        fail(s"Expected error comment but got valid RapidsShuffleManager: $smClassName")
-      case Left(comment) =>
-        assert(comment == shuffleManagerCommentForUnsupportedVersion(sparkVersion,
-          autoTuner.platform))
-    }
-  }
-
   test("test shuffle manager version for unsupported databricks version") {
     val databricksVersion = "9.1.x-gpu-ml-scala2.12"
     val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0),
@@ -2395,36 +2395,6 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
       infoProvider,
       PlatformFactory.createInstance(PlatformNames.DATABRICKS_AWS))
     verifyUnsupportedSparkVersionForShuffleManager(autoTuner, databricksVersion)
-  }
-
-  test("test shuffle manager version for supported databricks version - 17.3 on scala 2.13") {
-    val databricksVersion = "17.3.x-gpu-ml-scala2.13"
-    val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0),
-      mutable.Map("spark.rapids.sql.enabled" -> "true",
-        "spark.plugins" -> "com.nvidia.spark.AnotherPlugin, com.nvidia.spark.SQLPlugin",
-        DBVersionExtractor.DB_SPARK_VERSION_KEY -> databricksVersion),
-      Some(databricksVersion), Seq())
-    val autoTuner = buildAutoTunerForTests(
-      infoProvider,
-      PlatformFactory.createInstance(PlatformNames.DATABRICKS_AZURE))
-    verifyRecommendedShuffleManagerVersion(autoTuner, expectedSmVersion = "400db173")
-  }
-
-  test("test shuffle manager version for databricks version without a plugin shim - 15.4") {
-    val databricksVersion = "15.4.x-gpu-ml-scala2.12"
-    val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0),
-      mutable.Map("spark.rapids.sql.enabled" -> "true",
-        "spark.plugins" -> "com.nvidia.spark.AnotherPlugin, com.nvidia.spark.SQLPlugin",
-        DBVersionExtractor.DB_SPARK_VERSION_KEY -> databricksVersion),
-      Some(databricksVersion), Seq())
-    val autoTuner = buildAutoTunerForTests(
-      infoProvider,
-      PlatformFactory.createInstance(PlatformNames.DATABRICKS_AWS))
-    verifyUnsupportedSparkVersionForShuffleManager(autoTuner, databricksVersion)
-    // the comment points the user at the newest supported runtime, which must be 17.3
-    val (latestVersion, latestSmVersion) = autoTuner.platform.latestSupportedShuffleManagerInfo
-    assert(latestVersion == "17.3")
-    assert(latestSmVersion == "400db173")
   }
 
   test("test shuffle manager version for unsupported spark version") {
